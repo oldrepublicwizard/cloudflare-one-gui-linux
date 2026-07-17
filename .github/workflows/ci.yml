@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run npm check
+        run: npm run check
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shellcheck launchers and scripts
+        run: |
+          shellcheck --severity=warning bin/cloudflare-one-gui bin/cloudflare-one-tray
+          shellcheck --severity=warning scripts/*.sh packaging/scripts/*.sh packaging/usr-bin-wrapper.sh packaging/appimage/AppRun
+
+      - name: Stage packaging payload
+        run: npm run package:stage
+
+      - name: Verify staged tree
+        run: |
+          test -x dist/payload/usr/bin/cloudflare-one-gui
+          test -f dist/payload/usr/lib/cloudflare-one-gui/server.js
+          test -f dist/payload/usr/share/applications/cloudflare-one-gui.desktop
+
+  package-smoke:
+    name: deb/rpm smoke
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build deb and rpm
+        run: bash packaging/scripts/build-deb-rpm.sh all
+        env:
+          PACKAGE_VERSION: 0.0.0-ci.${{ github.run_number }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-smoke
+          path: |
+            dist/packages/*.deb
+            dist/packages/*.rpm
+            dist/packages/*.pkg.tar.zst
+          retention-days: 7
