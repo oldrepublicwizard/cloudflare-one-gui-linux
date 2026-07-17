@@ -78,8 +78,8 @@ jobs:
       - name: Install verify deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm docker.io
-          sudo systemctl start docker || sudo service docker start || true
+          sudo apt-get install -y rpm
+          docker version
 
       - name: Build deb, rpm, arch
         run: bash packaging/scripts/build-deb-rpm.sh all
