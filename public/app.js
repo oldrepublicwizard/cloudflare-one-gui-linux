@@ -1,17 +1,17 @@
 import { loadLocale, t, tip, getLocale } from "./i18n.js";
 
 const navItems = [
-  ["home", "nav.home", "⌂"],
-  ["account", "nav.account", "◎"],
-  ["gateway", "nav.gateway", "◇"],
-  ["tunnel", "nav.tunnel", "↔"],
-  ["split", "nav.split", "⌁"],
-  ["trusted", "nav.trusted", "⌁"],
-  ["diagnostics", "nav.diagnostics", "◷"],
-  ["settings", "nav.settings", "⚙"],
-  ["app", "nav.app", "✦"],
-  ["parity", "nav.parity", "✓"],
-  ["advanced", "nav.advanced", "⌘"]
+  ["home", "nav.home", "⌂", "pageHome"],
+  ["account", "nav.account", "◎", "pageAccount"],
+  ["gateway", "nav.gateway", "◇", "pageGateway"],
+  ["tunnel", "nav.tunnel", "↔", "pageTunnel"],
+  ["split", "nav.split", "⌁", "pageSplit"],
+  ["trusted", "nav.trusted", "⌁", "pageTrusted"],
+  ["diagnostics", "nav.diagnostics", "◷", "pageDiagnostics"],
+  ["settings", "nav.settings", "⚙", "pageSettings"],
+  ["app", "nav.app", "✦", "pageApp"],
+  ["parity", "nav.parity", "✓", "pageParity"],
+  ["advanced", "nav.advanced", "⌘", "pageAdvanced"]
 ];
 
 const quickModes = ["warp", "doh", "warp+doh", "dot", "warp+dot", "proxy", "tunnel_only"];
@@ -59,8 +59,15 @@ const state = {
     endpoint: "",
     trustedSsid: "",
     overrideCode: "",
-    customCommand: "status"
-  }
+    customCommand: "status",
+    organization: "",
+    licenseKey: "",
+    authToken: ""
+  },
+  account: null,
+  accountLoading: false,
+  revealLicense: false,
+  accountPath: "auto"
 };
 
 const app = document.querySelector("#app");
@@ -102,16 +109,33 @@ function el(tag, className, html = "") {
   return node;
 }
 
-async function refresh() {
-  state.error = null;
-  render();
+async function refresh({ silent = false } = {}) {
+  if (!silent) {
+    state.error = null;
+    render();
+  }
   try {
     const response = await fetch("/api/snapshot");
     state.snapshot = await response.json();
+    if (state.view === "account") await loadAccount(false);
   } catch (error) {
     state.error = error.message;
   }
   render();
+}
+
+async function loadAccount(showBusy = true) {
+  if (showBusy) {
+    state.accountLoading = true;
+    render();
+  }
+  try {
+    const response = await fetch("/api/account");
+    state.account = await response.json();
+  } catch (error) {
+    state.error = error.message;
+  }
+  state.accountLoading = false;
 }
 
 async function action(actionName, value, secondary, confirmCommand = false) {
@@ -142,13 +166,18 @@ function shell() {
 
   const body = el("main", "app-body");
   const nav = el("nav", "sidebar");
-  navItems.forEach(([id, labelKey, icon]) => {
+  navItems.forEach(([id, labelKey, icon, tipKey]) => {
     const button = el("button", `nav-item ${state.view === id ? "active" : ""}`);
-    button.innerHTML = `<span class="nav-icon">${icon}</span><span>${t(labelKey)}</span>`;
+    button.innerHTML = `<span class="nav-icon" aria-hidden="true">${icon}</span><span>${t(labelKey)}</span>`;
+    button.setAttribute("aria-label", t(labelKey));
+    if (tipKey) applyTip(button, tipKey);
     button.onclick = () => {
       state.view = id;
       render();
       if (id === "app") loadAppPanel();
+      if (id === "account") {
+        loadAccount().then(() => render());
+      }
     };
     nav.append(button);
   });
@@ -199,21 +228,69 @@ function content() {
   return section;
 }
 
-function pageTitle(title, copy) {
-  return el("div", "page-title", `<h1>${title}</h1><p>${copy}</p>`);
+function tipMarkup(key) {
+  const text = tip(key);
+  if (!text || text.startsWith("tips.")) return "";
+  return ` class="tip" data-tip="${escapeHtml(text)}" tabindex="0"`;
+}
+
+function tipDataAttrs(key) {
+  const text = tip(key);
+  if (!text || text.startsWith("tips.")) return "";
+  return ` data-tip="${escapeHtml(text)}" tabindex="0"`;
+}
+
+function tipClass(key, base = "") {
+  const text = tip(key);
+  const has = Boolean(text && !text.startsWith("tips."));
+  return [base, has ? "tip" : ""].filter(Boolean).join(" ");
+}
+
+function applyTip(node, key) {
+  const text = tip(key);
+  if (!node || !text || text.startsWith("tips.")) return node;
+  node.classList.add("tip");
+  node.setAttribute("data-tip", text);
+  if (!node.hasAttribute("tabindex")) node.tabIndex = 0;
+  return node;
+}
+
+const modeValueTips = {
+  warp: "modeWarp",
+  doh: "modeDoh",
+  "warp+doh": "modeWarpDoh",
+  dot: "modeDot",
+  "warp+dot": "modeWarpDot",
+  proxy: "modeProxy",
+  tunnel_only: "modeTunnelOnly"
+};
+
+const familiesValueTips = {
+  off: "familiesOff",
+  malware: "familiesMalware",
+  full: "familiesFull"
+};
+
+const protocolValueTips = {
+  MASQUE: "protocolMasque",
+  WireGuard: "protocolWireGuard"
+};
+
+function pageTitle(title, copy, tipKey = "") {
+  return el("div", "page-title", `<h1${tipMarkup(tipKey)}>${title}</h1><p>${copy}</p>`);
 }
 
 function homeView() {
   const grid = el("div", "view-stack");
-  grid.append(pageTitle(t("home.title"), t("home.copy")));
+  grid.append(pageTitle(t("home.title"), t("home.copy"), "pageHome"));
 
   const layout = el("div", "home-grid");
   const primary = el("section", "hero-panel panel");
   primary.innerHTML = `
     <div class="status-orb ${statusKind()}"><span></span></div>
     <div class="hero-copy">
-      <div class="status-label">${statusText()}</div>
-      <h2>${state.snapshot?.daemon?.available ? t("home.tunnelControls") : t("home.daemonMissing")}</h2>
+      <div class="status-label tip" data-tip="${escapeHtml(tip("liveStatus"))}" tabindex="0">${statusText()}</div>
+      <h2 class="tip" data-tip="${escapeHtml(tip("daemon"))}" tabindex="0">${state.snapshot?.daemon?.available ? t("home.tunnelControls") : t("home.daemonMissing")}</h2>
       <p>${state.snapshot?.daemon?.message || t("common.loading")}</p>
     </div>
     <div class="hero-actions">
@@ -225,23 +302,25 @@ function homeView() {
   primary.querySelector('[data-action="disconnect"]').onclick = () => action("disconnect");
 
   const quick = el("section", "panel quick-panel");
-  quick.innerHTML = `<div class="panel-heading"><h3>${t("home.quickSettings")}</h3><span>${t("home.quickHint")}</span></div>`;
-  quick.append(segmented(t("home.mode"), quickModes, "setMode", setting("Mode"), tip("mode")));
-  quick.append(segmented(t("home.protocol"), protocols, "setProtocol", setting("Tunnel protocol", "Protocol"), tip("protocol")));
-  quick.append(segmented(t("home.families"), families, "setFamilies", setting("Families mode", "DNS families"), tip("families")));
+  quick.innerHTML = `<div class="panel-heading"><h3${tipMarkup("mode")}>${t("home.quickSettings")}</h3><span>${t("home.quickHint")}</span></div>`;
+  quick.append(segmented(t("home.mode"), quickModes, "setMode", setting("Mode"), tip("mode"), modeValueTips));
+  quick.append(segmented(t("home.protocol"), protocols, "setProtocol", setting("Tunnel protocol", "Protocol"), tip("protocol"), protocolValueTips));
+  quick.append(segmented(t("home.families"), families, "setFamilies", setting("Families mode", "DNS families"), tip("families"), familiesValueTips));
 
   layout.append(primary, quick);
-  grid.append(layout, metrics(), liveStatePanel(), outputPanel("Last command", state.lastAction));
+  grid.append(layout, metrics(), liveStatePanel(), outputPanel("Last command", state.lastAction, "rawOutput"));
   return grid;
 }
 
-function segmented(label, values, actionName, current, tipText = "") {
+function segmented(label, values, actionName, current, tipText = "", valueTips = null) {
   const wrap = el("div", "field-group");
   const tipAttr = tipText ? ` class="tip" data-tip="${escapeHtml(tipText)}" tabindex="0"` : "";
   wrap.innerHTML = `<label${tipAttr}>${label}</label>`;
   const row = el("div", "segmented");
   values.forEach((value) => {
     const button = el("button", current?.toLowerCase?.() === value.toLowerCase() ? "selected" : "", value);
+    const tipKey = valueTips && (valueTips[value] || valueTips[String(value).toLowerCase()]);
+    if (tipKey) applyTip(button, tipKey);
     button.onclick = () => {
       if (actionName === "setEnvironment") {
         action(value === "FedRAMP-High" ? "environmentFedramp" : "environmentNormal", undefined, undefined, true);
@@ -259,16 +338,16 @@ function metrics() {
   const tunnel = state.snapshot?.parsed?.tunnel || {};
   const dns = state.snapshot?.parsed?.dns || {};
   const items = [
-    ["Mode", setting("Mode")],
-    ["Protocol", tunnel.protocol || setting("Tunnel protocol", "Protocol")],
-    ["Latency", tunnel.latency || "Unknown"],
-    ["Traffic", tunnel.sent && tunnel.received ? `${tunnel.sent} up / ${tunnel.received} down` : "Unknown"],
-    ["DNS", dns.success ? `${dns.success} success` : "Unknown"],
-    ["Generated", state.snapshot ? new Date(state.snapshot.generatedAt).toLocaleTimeString() : "Pending"]
+    ["Mode", setting("Mode"), "mode"],
+    ["Protocol", tunnel.protocol || setting("Tunnel protocol", "Protocol"), "protocol"],
+    ["Latency", tunnel.latency || "Unknown", "handshake"],
+    ["Traffic", tunnel.sent && tunnel.received ? `${tunnel.sent} up / ${tunnel.received} down` : "Unknown", "loss"],
+    ["DNS", dns.success ? `${dns.success} success` : "Unknown", "dnsQueries"],
+    ["Generated", state.snapshot ? new Date(state.snapshot.generatedAt).toLocaleTimeString() : "Pending", "liveStatus"]
   ];
   const row = el("section", "metrics-row");
-  items.forEach(([label, value]) => {
-    row.append(el("div", "metric", `<span>${label}</span><strong>${escapeHtml(String(value)).slice(0, 80)}</strong>`));
+  items.forEach(([label, value, tipKey]) => {
+    row.append(el("div", "metric", `<span${tipMarkup(tipKey)}>${label}</span><strong>${escapeHtml(String(value)).slice(0, 80)}</strong>`));
   });
   return row;
 }
@@ -279,128 +358,426 @@ function liveStatePanel() {
   const panel = el("section", "panel state-panel");
   panel.innerHTML = `
     <div class="panel-heading">
-      <h3>Current State</h3>
+      <h3${tipMarkup("liveStatus")}>Current State</h3>
       <span>${state.live.lastEvent ? `event ${new Date(state.live.lastEvent).toLocaleTimeString()}` : "snapshot"}</span>
     </div>
     <div class="state-grid">
-      ${stateDatum("Colo", tunnel.colo || "Unknown")}
-      ${stateDatum("Handshake", tunnel.handshakeAge || "Unknown")}
-      ${stateDatum("Loss", tunnel.loss || "Unknown")}
-      ${stateDatum("DNS queries", dns.queries || "Unknown")}
-      ${stateDatum("DNS avg", dns.averageDuration || "Unknown")}
-      ${stateDatum("Live event", state.live.lastLine || "Waiting")}
-      ${stateDatum("VNet", commandText("vnet"))}
+      ${stateDatum("Colo", tunnel.colo || "Unknown", "colo")}
+      ${stateDatum("Handshake", tunnel.handshakeAge || "Unknown", "handshake")}
+      ${stateDatum("Loss", tunnel.loss || "Unknown", "loss")}
+      ${stateDatum("DNS queries", dns.queries || "Unknown", "dnsQueries")}
+      ${stateDatum("DNS avg", dns.averageDuration || "Unknown", "dnsAvg")}
+      ${stateDatum("Live event", state.live.lastLine || "Waiting", "liveStatus")}
+      ${stateDatum("VNet", commandText("vnet"), "vnetMetric")}
     </div>
   `;
   return panel;
 }
 
-function stateDatum(label, value) {
-  return `<div class="state-datum"><span>${label}</span><strong>${escapeHtml(String(value)).slice(0, 96)}</strong></div>`;
+function stateDatum(label, value, tipKey = "") {
+  return `<div class="${tipClass(tipKey, "state-datum")}"${tipDataAttrs(tipKey)}><span>${label}</span><strong>${escapeHtml(String(value)).slice(0, 96)}</strong></div>`;
 }
 
 function accountView() {
-  const view = el("div", "view-stack");
-  view.append(pageTitle("Account and enrollment", "Register this device, inspect organization state, and manage account binding."));
-  view.append(actionPanel("Registration", [
-    ["Register device", "register"],
-    ["Delete registration", "deleteRegistration"],
-    ["Rotate tunnel keys", "rotateKeys"]
-  ]));
-  view.append(outputPanel("Registration", state.snapshot?.commands?.registration));
-  view.append(outputPanel("Organization", state.snapshot?.commands?.organization));
-  view.append(outputPanel("Targets", state.snapshot?.commands?.targets));
+  const view = el("div", "view-stack account-view");
+  const acct = state.account;
+  view.append(pageTitle(t("account.title"), t("account.copy"), "pageAccount"));
+
+  const path = resolveAccountPath(acct);
+  const overview = el("section", "panel account-overview account-status-strip");
+  overview.innerHTML = `
+    <div class="panel-heading">
+      <h3 class="tip" data-tip="${escapeHtml(tip("accountOverview"))}" tabindex="0">${t("account.overview")}</h3>
+      <span class="${acct?.registered ? "ok" : "fail"}">${acct?.registered ? t("account.registered") : t("account.notRegistered")}</span>
+    </div>
+    <p class="account-lede">${escapeHtml(t("account.lede"))}</p>
+  `;
+  if (state.accountLoading && !acct) {
+    overview.append(el("p", "muted", t("common.loading")));
+  } else if (acct) {
+    const typeLabel = acct.accountType
+      ? String(acct.accountType)
+      : acct.registered
+        ? t("common.unknown")
+        : t("account.none");
+    const badgeClass = !acct.registered ? "badge warn" : acct.consumer ? "badge ok" : "badge zt";
+    const grid = el("div", "state-grid account-status-grid");
+    grid.innerHTML = `
+      <div class="state-datum tip" data-tip="${escapeHtml(tip("accountOverview"))}" tabindex="0"><span>${t("account.accountType")}</span><strong><span class="${badgeClass}">${escapeHtml(typeLabel)}</span></strong></div>
+      <div class="state-datum tip" data-tip="${escapeHtml(tip("zeroTrust"))}" tabindex="0"><span>${t("account.organization")}</span><strong>${escapeHtml(acct.organization || t("account.none"))}</strong></div>
+      <div class="state-datum tip" data-tip="${escapeHtml(tip("deviceId"))}" tabindex="0"><span>${t("account.deviceId")}</span><strong>${escapeHtml(shortId(acct.deviceId))}</strong></div>
+      <div class="state-datum tip" data-tip="${escapeHtml(tip("accountId"))}" tabindex="0"><span>${t("account.accountId")}</span><strong>${escapeHtml(shortId(acct.accountId))}</strong></div>
+    `;
+    overview.append(grid);
+  }
+  view.append(overview);
+
+  const paths = el("div", "account-path-switch field-group");
+  paths.innerHTML = `<label class="tip" data-tip="${escapeHtml(tip("accountOverview"))}" tabindex="0">${t("account.choosePath")}</label>`;
+  const seg = el("div", "segmented account-paths");
+  [
+    ["free", t("account.pathFree"), tip("freePlan")],
+    ["zerotrust", t("account.pathZeroTrust"), tip("zeroTrust")]
+  ].forEach(([id, label, tipText]) => {
+    const button = el("button", path === id ? "selected" : "", label);
+    button.classList.add("tip");
+    button.setAttribute("data-tip", tipText);
+    button.tabIndex = 0;
+    button.onclick = () => {
+      state.accountPath = id;
+      render();
+    };
+    seg.append(button);
+  });
+  paths.append(seg);
+  view.append(paths);
+
+  const workspace = el("div", "account-workspace");
+  workspace.append(path === "zerotrust" ? zeroTrustPanel(acct) : freePlanPanel(acct));
+  view.append(workspace);
+  view.append(dangerPanel());
+
+  const details = el("details", "account-raw");
+  details.innerHTML = `<summary class="tip" data-tip="${escapeHtml(tip("rawOutput"))}" tabindex="0">${t("account.rawOutput")}</summary>`;
+  details.append(outputPanel(t("account.registrationRaw"), state.snapshot?.commands?.registration || acct?.commands?.registration, "rawOutput"));
+  details.append(outputPanel(t("account.organizationRaw"), state.snapshot?.commands?.organization || acct?.commands?.organization, "rawOutput"));
+  details.append(outputPanel(t("account.devicesRaw"), state.snapshot?.commands?.devices || acct?.commands?.devices, "devices"));
+  details.append(outputPanel(t("account.targetsRaw"), state.snapshot?.commands?.targets, "rawOutput"));
+  view.append(details);
   return view;
+}
+
+function resolveAccountPath(acct) {
+  if (state.accountPath === "free" || state.accountPath === "zerotrust") return state.accountPath;
+  if (acct?.zeroTrust && !acct?.consumer) return "zerotrust";
+  return "free";
+}
+
+function shortId(value) {
+  if (!value) return t("account.none");
+  const s = String(value);
+  if (s.length <= 12) return s;
+  return `${s.slice(0, 8)}…${s.slice(-4)}`;
+}
+
+function freePlanPanel(acct) {
+  const panel = el("section", "panel account-section");
+  panel.innerHTML = `
+    <div class="panel-heading">
+      <h3 class="tip" data-tip="${escapeHtml(tip("freePlan"))}" tabindex="0">${t("account.freeTitle")}</h3>
+      <span>${t("account.freeHint")}</span>
+    </div>
+    <p class="muted">${escapeHtml(t("account.freeCopy"))}</p>
+    <ol class="account-steps compact">
+      <li>${escapeHtml(t("account.freeStep1"))}</li>
+      <li>${escapeHtml(t("account.freeStep2"))}</li>
+      <li>${escapeHtml(t("account.freeStep3"))}</li>
+    </ol>
+  `;
+
+  const actions = el("div", "button-row");
+  const registerBtn = el("button", "primary tip", t("account.registerFree"));
+  registerBtn.setAttribute("data-tip", tip("registerFree"));
+  registerBtn.onclick = () => action("register");
+  actions.append(registerBtn);
+  panel.append(actions);
+
+  if (acct?.license) {
+    const licenseBox = el("div", "license-box");
+    const shown = state.revealLicense ? acct.license : maskLicense(acct.license);
+    licenseBox.innerHTML = `
+      <div class="panel-heading">
+        <h4 class="tip" data-tip="${escapeHtml(tip("licenseKey"))}" tabindex="0">${t("account.yourLicense")}</h4>
+        <span>${t("account.licenseHint")}</span>
+      </div>
+      <code class="license-value">${escapeHtml(shown)}</code>
+    `;
+    const row = el("div", "button-row");
+    const reveal = el("button", "secondary", state.revealLicense ? t("account.hideLicense") : t("account.revealLicense"));
+    reveal.onclick = () => {
+      state.revealLicense = !state.revealLicense;
+      render();
+    };
+    const copy = el("button", "secondary tip", t("account.copyLicense"));
+    copy.setAttribute("data-tip", tip("copyLicense"));
+    copy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(acct.license);
+        state.toast = t("account.licenseCopied");
+        render();
+      } catch {
+        state.error = t("account.copyFailed");
+        render();
+      }
+    };
+    row.append(reveal, copy);
+    licenseBox.append(row);
+    panel.append(licenseBox);
+  }
+
+  const licenseForm = el("label", "input-row");
+  licenseForm.innerHTML = `
+    <span class="tip" data-tip="${escapeHtml(tip("applyLicense"))}" tabindex="0">${t("account.applyLicenseLabel")}</span>
+    <input value="${escapeHtml(state.forms.licenseKey)}" placeholder="${escapeHtml(t("account.licensePlaceholder"))}" autocomplete="off" spellcheck="false" />
+    <button class="secondary">${t("account.applyLicense")}</button>
+  `;
+  const licenseInput = licenseForm.querySelector("input");
+  licenseInput.oninput = () => {
+    state.forms.licenseKey = licenseInput.value;
+  };
+  licenseForm.querySelector("button").onclick = () => {
+    if (!state.forms.licenseKey.trim()) return;
+    action("applyLicense", state.forms.licenseKey.trim());
+  };
+  panel.append(licenseForm);
+
+  if (acct?.consumer && Array.isArray(acct.devices)) {
+    const devices = el("div", "devices-list");
+    devices.innerHTML = `
+      <div class="panel-heading">
+        <h4 class="tip" data-tip="${escapeHtml(tip("devices"))}" tabindex="0">${t("account.devices")}</h4>
+        <span>${acct.devices.length}</span>
+      </div>
+    `;
+    if (!acct.devices.length) {
+      devices.append(el("p", "muted", t("account.noDevices")));
+    } else {
+      const table = el("div", "device-table");
+      acct.devices.forEach((device) => {
+        const row = el("div", "device-row");
+        const active = device.active ? t("account.active") : t("account.inactive");
+        row.innerHTML = `
+          <strong>${escapeHtml(device.name || device.model || t("account.unnamedDevice"))}</strong>
+          <span>${escapeHtml(device.os || t("common.unknown"))}</span>
+          <span class="${device.active ? "ok" : "muted"}">${escapeHtml(active)}</span>
+          <code>${escapeHtml(shortId(device.deviceId))}</code>
+        `;
+        table.append(row);
+      });
+      devices.append(table);
+    }
+    panel.append(devices);
+  }
+
+  const docs = el("p", "account-docs muted");
+  docs.innerHTML = `${escapeHtml(t("account.docsPrefix"))} <a href="https://developers.cloudflare.com/warp-client/get-started/linux/" target="_blank" rel="noopener noreferrer">${escapeHtml(t("account.docsLinux"))}</a>`;
+  panel.append(docs);
+  return panel;
+}
+
+function zeroTrustPanel(acct) {
+  const panel = el("section", "panel account-section");
+  panel.innerHTML = `
+    <div class="panel-heading">
+      <h3 class="tip" data-tip="${escapeHtml(tip("zeroTrust"))}" tabindex="0">${t("account.ztTitle")}</h3>
+      <span>${t("account.ztHint")}</span>
+    </div>
+    <p class="muted">${escapeHtml(t("account.ztCopy"))}</p>
+    <ol class="account-steps compact">
+      <li>${escapeHtml(t("account.ztStep1"))}</li>
+      <li>${escapeHtml(t("account.ztStep2"))}</li>
+      <li>${escapeHtml(t("account.ztStep3"))}</li>
+    </ol>
+  `;
+
+  const teamForm = el("label", "input-row");
+  teamForm.innerHTML = `
+    <span class="tip" data-tip="${escapeHtml(tip("teamName"))}" tabindex="0">${t("account.teamName")}</span>
+    <input value="${escapeHtml(state.forms.organization)}" placeholder="${escapeHtml(t("account.teamPlaceholder"))}" autocomplete="off" spellcheck="false" />
+    <button class="primary">${t("account.enrollTeam")}</button>
+  `;
+  const teamInput = teamForm.querySelector("input");
+  teamInput.oninput = () => {
+    state.forms.organization = teamInput.value;
+  };
+  teamForm.querySelector("button").onclick = () => {
+    const team = state.forms.organization.trim().toLowerCase();
+    if (!team) return;
+    action("registerOrganization", team, null, true);
+  };
+  panel.append(teamForm);
+
+  const portalRow = el("div", "button-row");
+  const openPortal = el("button", "secondary tip", t("account.openPortal"));
+  openPortal.setAttribute("data-tip", tip("openPortal"));
+  openPortal.onclick = () => {
+    const team = (acct?.organization || state.forms.organization || "").trim().toLowerCase();
+    if (!team) {
+      state.error = t("account.teamRequired");
+      render();
+      return;
+    }
+    window.open(`https://${encodeURIComponent(team)}.cloudflareaccess.com/warp`, "_blank", "noopener,noreferrer");
+  };
+  portalRow.append(openPortal);
+  if (acct?.accessPortalUrl) {
+    const link = el("a", "doc-link", acct.accessPortalUrl);
+    link.href = acct.accessPortalUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    portalRow.append(link);
+  }
+  panel.append(portalRow);
+
+  const tokenForm = el("label", "input-row token-row");
+  tokenForm.innerHTML = `
+    <span class="tip" data-tip="${escapeHtml(tip("authToken"))}" tabindex="0">${t("account.authToken")}</span>
+    <input value="${escapeHtml(state.forms.authToken)}" placeholder="${escapeHtml(t("account.tokenPlaceholder"))}" autocomplete="off" spellcheck="false" />
+    <button class="secondary">${t("account.completeToken")}</button>
+  `;
+  const tokenInput = tokenForm.querySelector("input");
+  tokenInput.oninput = () => {
+    state.forms.authToken = tokenInput.value;
+  };
+  tokenForm.querySelector("button").onclick = () => {
+    if (!state.forms.authToken.trim()) return;
+    action("registrationToken", state.forms.authToken.trim(), null, true);
+  };
+  panel.append(tokenForm);
+
+  const docs = el("p", "account-docs muted");
+  docs.innerHTML = `${escapeHtml(t("account.docsPrefix"))} <a href="https://developers.cloudflare.com/cloudflare-one/team-and-resources/devices/cloudflare-one-client/deployment/manual-deployment/" target="_blank" rel="noopener noreferrer">${escapeHtml(t("account.docsZt"))}</a>`;
+  panel.append(docs);
+  return panel;
+}
+
+function dangerPanel() {
+  const panel = el("section", "panel account-section danger-zone");
+  panel.innerHTML = `
+    <div class="panel-heading">
+      <h3 class="tip" data-tip="${escapeHtml(tip("dangerZone"))}" tabindex="0">${t("account.dangerTitle")}</h3>
+      <span>${t("account.dangerHint")}</span>
+    </div>
+    <p class="muted">${escapeHtml(t("account.dangerCopy"))}</p>
+  `;
+  const row = el("div", "button-row");
+  const rotate = el("button", "secondary tip", t("account.rotateKeys"));
+  rotate.setAttribute("data-tip", tip("rotateKeys"));
+  rotate.onclick = () => {
+    if (!window.confirm(t("account.confirmRotate"))) return;
+    action("rotateKeys");
+  };
+  const del = el("button", "secondary danger tip", t("account.deleteRegistration"));
+  del.setAttribute("data-tip", tip("deleteRegistration"));
+  del.onclick = () => {
+    if (!window.confirm(t("account.confirmDelete"))) return;
+    action("deleteRegistration");
+  };
+  row.append(rotate, del);
+  panel.append(row);
+  return panel;
+}
+
+function maskLicense(value) {
+  const s = String(value || "");
+  if (s.length < 8) return "••••••••";
+  return `${s.slice(0, 4)}${"•".repeat(Math.min(12, s.length - 8))}${s.slice(-4)}`;
 }
 
 function gatewayView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle("Gateway DNS", "Control DNS mode, Families filtering, logging visibility, and Gateway status."));
-  view.append(segmented("Families mode", families, "setFamilies", setting("Families mode")));
+  view.append(pageTitle("Gateway DNS", "Control DNS mode, Families filtering, logging visibility, and Gateway status.", "pageGateway"));
+  view.append(segmented("Families mode", families, "setFamilies", setting("Families mode"), tip("families"), familiesValueTips));
   view.append(formPanel("Gateway and fallback domains", [
-    ["Gateway ID", "gatewayId", "Set Gateway ID", () => action("setGatewayId", state.forms.gatewayId, null, true)],
-    ["Fallback domain", "dnsFallback", "Add fallback", () => action("addDnsFallback", state.forms.dnsFallback)]
+    ["Gateway ID", "gatewayId", "Set Gateway ID", () => action("setGatewayId", state.forms.gatewayId, null, true), "gatewayId"],
+    ["Fallback domain", "dnsFallback", "Add fallback", () => action("addDnsFallback", state.forms.dnsFallback), "dnsFallback"]
   ]));
-  view.append(actionPanel("Gateway actions", [["Reset Gateway ID", "resetGatewayId"]]));
-  view.append(actionPanel("DNS logging", [["Enable DNS log", "dnsLogEnable"], ["Disable DNS log", "dnsLogDisable"]]));
-  view.append(outputPanel("Fallback domains", state.snapshot?.commands?.dnsFallback));
-  view.append(outputPanel("DNS statistics", state.snapshot?.commands?.dnsStats));
-  view.append(outputPanel("Default fallbacks", state.snapshot?.commands?.dnsDefaultFallbacks));
-  view.append(outputPanel("Settings", state.snapshot?.commands?.settings));
+  view.append(actionPanel("Gateway actions", [["Reset Gateway ID", "resetGatewayId", "resetGatewayId"]]));
+  view.append(actionPanel("DNS logging", [
+    ["Enable DNS log", "dnsLogEnable", "dnsLog"],
+    ["Disable DNS log", "dnsLogDisable", "dnsLog"]
+  ]));
+  view.append(outputPanel("Fallback domains", state.snapshot?.commands?.dnsFallback, "dnsFallback"));
+  view.append(outputPanel("DNS statistics", state.snapshot?.commands?.dnsStats, "dnsQueries"));
+  view.append(outputPanel("Default fallbacks", state.snapshot?.commands?.dnsDefaultFallbacks, "dnsFallback"));
+  view.append(outputPanel("Settings", state.snapshot?.commands?.settings, "pageSettings"));
   return view;
 }
 
 function tunnelView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle("Tunnel", "Switch WARP modes, tunnel protocols, proxy port, and virtual network."));
-  view.append(segmented("Operating mode", quickModes, "setMode", setting("Mode"), tip("mode")));
-  view.append(segmented("Preferred protocol", protocols, "setProtocol", setting("Tunnel protocol", "Protocol"), tip("protocol")));
+  view.append(pageTitle("Tunnel", "Switch WARP modes, tunnel protocols, proxy port, and virtual network.", "pageTunnel"));
+  view.append(segmented("Operating mode", quickModes, "setMode", setting("Mode"), tip("mode"), modeValueTips));
+  view.append(segmented("Preferred protocol", protocols, "setProtocol", setting("Tunnel protocol", "Protocol"), tip("protocol"), protocolValueTips));
   view.append(segmented("MASQUE options", masqueOptions, "setMasqueOptions", setting("HTTP Version", "MASQUE Protocol Settings"), tip("masque")));
   view.append(formPanel("Proxy and VNet", [
-    ["SOCKS proxy port", "proxyPort", "Set proxy port", () => action("setProxyPort", state.forms.proxyPort)],
-    ["Virtual network", "vnet", "Set VNet", () => action("setVnet", state.forms.vnet)],
-    ["Endpoint IP:port", "endpoint", "Set endpoint", () => action("setEndpoint", state.forms.endpoint, null, true)]
+    ["SOCKS proxy port", "proxyPort", "Set proxy port", () => action("setProxyPort", state.forms.proxyPort), "proxyPort"],
+    ["Virtual network", "vnet", "Set VNet", () => action("setVnet", state.forms.vnet), "vnet"],
+    ["Endpoint IP:port", "endpoint", "Set endpoint", () => action("setEndpoint", state.forms.endpoint, null, true), "endpoint"]
   ]));
-  view.append(actionPanel("Tunnel actions", [["Reset protocol", "resetProtocol"], ["Reset MASQUE options", "resetMasqueOptions"], ["Reset endpoint", "resetEndpoint"]]));
-  view.append(outputPanel("Tunnel statistics", state.snapshot?.commands?.tunnelStats));
+  view.append(actionPanel("Tunnel actions", [
+    ["Reset protocol", "resetProtocol", "resetProtocol"],
+    ["Reset MASQUE options", "resetMasqueOptions", "resetMasqueOptions"],
+    ["Reset endpoint", "resetEndpoint", "resetEndpoint"]
+  ]));
+  view.append(outputPanel("Tunnel statistics", state.snapshot?.commands?.tunnelStats, "handshake"));
   return view;
 }
 
 function splitView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle("Split Tunnel", tip("splitTunnel")));
+  view.append(pageTitle("Split Tunnel", tip("splitTunnel"), "pageSplit"));
   view.append(formPanel("Routes", [
-    ["IP or CIDR", "splitIp", "Add IP", () => action("addSplitIp", state.forms.splitIp)],
-    ["Host name", "splitHost", "Add host", () => action("addSplitHost", state.forms.splitHost)]
+    ["IP or CIDR", "splitIp", "Add IP", () => action("addSplitIp", state.forms.splitIp), "splitIp"],
+    ["Host name", "splitHost", "Add host", () => action("addSplitHost", state.forms.splitHost), "splitHost"]
   ]));
-  view.append(actionPanel("Reset", [["Reset IP routes", "resetSplitIps"], ["Reset host routes", "resetSplitHosts"]]));
-  view.append(outputPanel("Routing dump", state.snapshot?.commands?.splitTunnelDump));
-  view.append(outputPanel("IP routes", state.snapshot?.commands?.splitTunnelIps));
-  view.append(outputPanel("Host routes", state.snapshot?.commands?.splitTunnelHosts));
+  view.append(actionPanel("Reset", [
+    ["Reset IP routes", "resetSplitIps", "resetSplitIps"],
+    ["Reset host routes", "resetSplitHosts", "resetSplitHosts"]
+  ]));
+  view.append(outputPanel("Routing dump", state.snapshot?.commands?.splitTunnelDump, "splitTunnel"));
+  view.append(outputPanel("IP routes", state.snapshot?.commands?.splitTunnelIps, "splitIp"));
+  view.append(outputPanel("Host routes", state.snapshot?.commands?.splitTunnelHosts, "splitHost"));
   return view;
 }
 
 function diagnosticsView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle("Diagnostics", "Inspect daemon health, WARP stats, network posture, and raw command output."));
+  view.append(pageTitle("Diagnostics", "Inspect daemon health, WARP stats, network posture, and raw command output.", "pageDiagnostics"));
   view.append(metrics());
-  view.append(outputPanel("Connection status", state.snapshot?.commands?.status));
-  view.append(outputPanel("WARP stats", state.snapshot?.commands?.stats));
-  view.append(outputPanel("Network", state.snapshot?.commands?.network));
-  view.append(outputPanel("Posture", state.snapshot?.commands?.posture));
-  view.append(outputPanel("DEX", state.snapshot?.commands?.dex));
-  view.append(actionPanel("Identity and logs", [["Refresh Access auth", "accessReauth"]]));
-  view.append(outputPanel("Administrative override", state.snapshot?.commands?.override));
-  view.append(outputPanel("Local network override", state.snapshot?.commands?.localNetworkOverride));
+  view.append(outputPanel("Connection status", state.snapshot?.commands?.status, "liveStatus"));
+  view.append(outputPanel("WARP stats", state.snapshot?.commands?.stats, "handshake"));
+  view.append(outputPanel("Network", state.snapshot?.commands?.network, "networkDebug"));
+  view.append(outputPanel("Posture", state.snapshot?.commands?.posture, "posture"));
+  view.append(outputPanel("DEX", state.snapshot?.commands?.dex, "dex"));
+  view.append(actionPanel("Identity and logs", [["Refresh Access auth", "accessReauth", "accessReauth"]]));
+  view.append(outputPanel("Administrative override", state.snapshot?.commands?.override, "overrideShow"));
+  view.append(outputPanel("Local network override", state.snapshot?.commands?.localNetworkOverride, "localNetworkOverride"));
   return view;
 }
 
 function settingsView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle("WARP Settings", "General WARP client settings and administrative controls."));
-  view.append(segmented("Compliance environment", ["Normal", "FedRAMP-High"], "setEnvironment", setting("Compliance Environment")));
+  view.append(pageTitle("WARP Settings", "General WARP client settings and administrative controls.", "pageSettings"));
+  view.append(segmented("Compliance environment", ["Normal", "FedRAMP-High"], "setEnvironment", setting("Compliance Environment"), tip("environment")));
   view.append(formPanel("Administrative override", [
-    ["Override code", "overrideCode", "Apply code", () => action("overrideCode", state.forms.overrideCode, null, true)],
-    ["Unlock code", "overrideCode", "Unlock", () => action("overrideUnlock", state.forms.overrideCode, null, true)]
+    ["Override code", "overrideCode", "Apply code", () => action("overrideCode", state.forms.overrideCode, null, true), "overrideCode"],
+    ["Unlock code", "overrideCode", "Unlock", () => action("overrideUnlock", state.forms.overrideCode, null, true), "overrideUnlock"]
   ]));
-  view.append(actionPanel("Local network access", [["Allow local network", "allowLocalNetwork"], ["Stop local network override", "stopLocalNetworkOverride"]]));
-  view.append(actionPanel("General", [["Reset environment", "environmentReset"], ["Reset all settings", "resetSettings"]]));
-  view.append(outputPanel("Settings list", state.snapshot?.commands?.settings));
-  view.append(outputPanel("Support URL", state.snapshot?.commands?.supportUrl));
-  view.append(outputPanel("Mode switch policy", state.snapshot?.commands?.modeSwitchAllowed));
-  view.append(outputPanel("MDM configs", state.snapshot?.commands?.mdm));
-  view.append(outputPanel("Alternate network", state.snapshot?.commands?.alternateNetwork));
+  view.append(actionPanel("Local network access", [
+    ["Allow local network", "allowLocalNetwork", "allowLocalNetwork"],
+    ["Stop local network override", "stopLocalNetworkOverride", "stopLocalNetworkOverride"]
+  ]));
+  view.append(actionPanel("General", [
+    ["Reset environment", "environmentReset", "environmentReset"],
+    ["Reset all settings", "resetSettings", "resetSettings"]
+  ]));
+  view.append(outputPanel("Settings list", state.snapshot?.commands?.settings, "pageSettings"));
+  view.append(outputPanel("Support URL", state.snapshot?.commands?.supportUrl, "supportUrl"));
+  view.append(outputPanel("Mode switch policy", state.snapshot?.commands?.modeSwitchAllowed, "modeSwitchAllowed"));
+  view.append(outputPanel("MDM configs", state.snapshot?.commands?.mdm, "mdm"));
+  view.append(outputPanel("Alternate network", state.snapshot?.commands?.alternateNetwork, "networkDebug"));
   return view;
 }
 
 function appView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle(t("app.title"), t("app.copy")));
+  view.append(pageTitle(t("app.title"), t("app.copy"), "pageApp"));
 
   const general = el("section", "panel");
-  general.innerHTML = `<div class="panel-heading"><h3>${t("app.general")}</h3><span>locale</span></div>`;
+  general.innerHTML = `<div class="panel-heading"><h3${tipMarkup("locale")}>${t("app.general")}</h3><span>locale</span></div>`;
   const localeRow = el("label", "input-row");
-  localeRow.innerHTML = `<span>${t("app.locale")}</span><select data-locale><option value="en">English</option></select><button class="secondary" data-save-locale>${t("common.save")}</button>`;
+  localeRow.innerHTML = `<span class="tip" data-tip="${escapeHtml(tip("locale"))}" tabindex="0">${t("app.locale")}</span><select data-locale><option value="en">English</option></select><button class="secondary" data-save-locale>${t("common.save")}</button>`;
   localeRow.querySelector("[data-locale]").value = getLocale();
   localeRow.querySelector("[data-save-locale]").onclick = async () => {
     const next = localeRow.querySelector("[data-locale]").value;
@@ -418,7 +795,7 @@ function appView() {
   const version = state.version?.version || "…";
   const format = state.version?.installFormat || "…";
   about.innerHTML = `
-    <div class="panel-heading"><h3>${t("app.about")}</h3><span>ThirdFlare One</span></div>
+    <div class="panel-heading"><h3${tipMarkup("pageApp")}>${t("app.about")}</h3><span>ThirdFlare One</span></div>
     <div class="state-grid">
       <div class="state-datum"><span>${t("app.currentVersion")}</span><strong>${escapeHtml(version)}</strong></div>
       <div class="state-datum"><span>${t("app.installFormat")}</span><strong>${escapeHtml(format)}</strong></div>
@@ -453,7 +830,7 @@ function updatesPanel() {
       return (b.stars || 0) - (a.stars || 0) || a.repo.localeCompare(b.repo);
     });
 
-  panel.innerHTML = `<div class="panel-heading"><h3>${t("app.updates")}</h3><span>${escapeHtml(`${owner}/${repo}`)}</span></div>`;
+  panel.innerHTML = `<div class="panel-heading"><h3 class="tip" data-tip="${escapeHtml(tip("checkUpdates"))}" tabindex="0">${t("app.updates")}</h3><span>${escapeHtml(`${owner}/${repo}`)}</span></div>`;
 
   const channelRow = el("div", "field-group");
   channelRow.innerHTML = `<label class="tip" data-tip="${escapeHtml(tip("channel"))}" tabindex="0">${t("app.channel")}</label>`;
@@ -813,39 +1190,39 @@ async function maybeStartupUpdateCheck() {
 
 function trustedView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle("Trusted networks", "Automatically disable WARP on trusted Wi-Fi, Ethernet, and named SSIDs when supported by the account."));
+  view.append(pageTitle("Trusted networks", "Automatically disable WARP on trusted Wi-Fi, Ethernet, and named SSIDs when supported by the account.", "pageTrusted"));
   view.append(formPanel("Trusted SSIDs", [
-    ["SSID", "trustedSsid", "Add SSID", () => action("addTrustedSsid", state.forms.trustedSsid)]
-  ]));
+    ["SSID", "trustedSsid", "Add SSID", () => action("addTrustedSsid", state.forms.trustedSsid), "trustedSsid"]
+  ], "trustedNetworks"));
   view.append(actionPanel("Network toggles", [
-    ["Disable on Wi-Fi", "trustedWifiEnable"],
-    ["Keep on Wi-Fi", "trustedWifiDisable"],
-    ["Disable on Ethernet", "trustedEthernetEnable"],
-    ["Keep on Ethernet", "trustedEthernetDisable"],
-    ["Reset SSIDs", "resetTrustedSsids"]
+    ["Disable on Wi-Fi", "trustedWifiEnable", "trustedWifiEnable"],
+    ["Keep on Wi-Fi", "trustedWifiDisable", "trustedWifiDisable"],
+    ["Disable on Ethernet", "trustedEthernetEnable", "trustedEthernetEnable"],
+    ["Keep on Ethernet", "trustedEthernetDisable", "trustedEthernetDisable"],
+    ["Reset SSIDs", "resetTrustedSsids", "resetTrustedSsids"]
   ]));
-  view.append(outputPanel("Trusted SSIDs", state.snapshot?.commands?.trustedSsids));
+  view.append(outputPanel("Trusted SSIDs", state.snapshot?.commands?.trustedSsids, "trustedSsid"));
   return view;
 }
 
 function advancedView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle("Advanced command center", "Run less common warp-cli commands without a shell and inspect raw output."));
+  view.append(pageTitle("Advanced command center", "Run less common warp-cli commands without a shell and inspect raw output.", "pageAdvanced"));
   view.append(formPanel("Custom warp-cli arguments", [
     ["Arguments", "customCommand", "Run command", () => {
       if (!window.confirm(`Run warp-cli ${state.forms.customCommand}?`)) return;
       action("runCustom", state.forms.customCommand);
-    }]
+    }, "customCommand"]
   ]));
-  view.append(outputPanel("Last command", state.lastAction));
-  view.append(outputPanel("Certificates", state.snapshot?.commands?.certs));
+  view.append(outputPanel("Last command", state.lastAction, "rawOutput"));
+  view.append(outputPanel("Certificates", state.snapshot?.commands?.certs, "certs"));
   view.append(outputPanel("Command coverage", {
     ok: true,
     code: 0,
     stdout: [
       "Mode: warp, doh, warp+doh, dot, warp+dot, proxy, tunnel_only",
       "Connection: connect, disconnect, status",
-      "Registration: show, new, delete, organization, targets",
+      "Registration: show, new, delete, organization, devices, license, token",
       "DNS: families, log, stats, default-fallbacks",
       "Tunnel: stats, dump, protocol, MASQUE options, endpoint, host/ip split tunnel, rotate-keys",
       "Zero Trust: vnet, MDM configs, support URL, mode switch policy, environment, overrides",
@@ -853,16 +1230,16 @@ function advancedView() {
       "Diagnostics: stats, certs, network, posture, DEX, alternate network, Access reauth",
       "Use the custom arguments box for uncommon commands such as: debug speed-test, trusted ssid remove <name>, dns fallback remove <domain>"
     ].join("\\n")
-  }));
+  }, "pageAdvanced"));
   return view;
 }
 
 function parityView() {
   const view = el("div", "view-stack");
-  view.append(pageTitle("Windows parity audit", "Track which Windows WARP app surfaces are covered by this Linux GUI and which still require native integration."));
+  view.append(pageTitle("Windows parity audit", "Track which Windows WARP app surfaces are covered by this Linux GUI and which still require native integration.", "pageParity"));
   view.append(parityPanel("Implemented GUI coverage", [
     ["Current connection state", "Live status stream, connect/disconnect, daemon health, tunnel/DNS metrics."],
-    ["Account and registration", "Registration show/new/delete, organization, target listing, key rotation."],
+    ["Account and registration", "Registration show/new/delete, organization, devices, license, token, key rotation."],
     ["Gateway DNS", "Families mode, DNS logging, fallback domains, default fallbacks, Gateway ID override."],
     ["Tunnel controls", "Mode, tunnel protocol, MASQUE options, endpoint, proxy port, VNet, split tunnel routes."],
     ["Trusted networks", "SSID list/add/reset plus Wi-Fi and Ethernet disable toggles."],
@@ -892,13 +1269,14 @@ function parityPanel(title, items, kind) {
   return panel;
 }
 
-function actionPanel(title, actions) {
+function actionPanel(title, actions, titleTipKey = "") {
   const panel = el("section", "panel action-panel");
-  panel.innerHTML = `<div class="panel-heading"><h3>${title}</h3><span>warp-cli actions</span></div>`;
+  panel.innerHTML = `<div class="panel-heading"><h3${tipMarkup(titleTipKey)}>${title}</h3><span>warp-cli actions</span></div>`;
   const row = el("div", "button-row");
-  actions.forEach(([label, actionName]) => {
+  actions.forEach(([label, actionName, tipKey]) => {
     const risky = /delete|reset|rotate|allow|stop|trusted|environment|unlock|override/i.test(actionName);
     const button = el("button", risky ? "secondary danger" : "secondary", label);
+    if (tipKey) applyTip(button, tipKey);
     button.onclick = () => {
       if (risky && !window.confirm(`Run warp-cli action: ${label}?`)) return;
       action(actionName);
@@ -909,12 +1287,12 @@ function actionPanel(title, actions) {
   return panel;
 }
 
-function formPanel(title, fields) {
+function formPanel(title, fields, titleTipKey = "") {
   const panel = el("section", "panel form-panel");
-  panel.innerHTML = `<div class="panel-heading"><h3>${title}</h3><span>editable values</span></div>`;
-  fields.forEach(([label, key, buttonLabel, onSubmit]) => {
+  panel.innerHTML = `<div class="panel-heading"><h3${tipMarkup(titleTipKey)}>${title}</h3><span>editable values</span></div>`;
+  fields.forEach(([label, key, buttonLabel, onSubmit, tipKey]) => {
     const row = el("label", "input-row");
-    row.innerHTML = `<span>${label}</span><input value="${escapeHtml(state.forms[key])}" /><button class="secondary">${buttonLabel}</button>`;
+    row.innerHTML = `<span${tipMarkup(tipKey)}>${label}</span><input value="${escapeHtml(state.forms[key])}" /><button class="secondary">${buttonLabel}</button>`;
     const input = row.querySelector("input");
     input.oninput = () => {
       state.forms[key] = input.value;
@@ -925,13 +1303,13 @@ function formPanel(title, fields) {
   return panel;
 }
 
-function outputPanel(title, result) {
+function outputPanel(title, result, tipKey = "") {
   const panel = el("section", "panel output-panel");
   const ok = result?.ok;
   const output = result ? (result.stdout || result.stderr || "No output.") : "No command has run yet.";
   panel.innerHTML = `
     <div class="panel-heading">
-      <h3>${title}</h3>
+      <h3${tipMarkup(tipKey)}>${title}</h3>
       <span class="${ok ? "ok" : "fail"}">${result ? (ok ? "ok" : `exit ${result.code ?? "error"}`) : "waiting"}</span>
     </div>
     <pre>${escapeHtml(output)}</pre>
@@ -947,7 +1325,83 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function contentScrollEl() {
+  return app.querySelector(".content");
+}
+
+function captureScroll() {
+  const content = contentScrollEl();
+  return {
+    contentTop: content ? content.scrollTop : 0,
+    contentLeft: content ? content.scrollLeft : 0
+  };
+}
+
+function restoreScroll(saved) {
+  if (!saved) return;
+  const apply = () => {
+    const content = contentScrollEl();
+    if (!content) return;
+    content.scrollTop = saved.contentTop;
+    content.scrollLeft = saved.contentLeft;
+  };
+  apply();
+  requestAnimationFrame(apply);
+}
+
+function patchLiveChrome() {
+  const pill = app.querySelector(".live-pill");
+  if (pill) {
+    pill.classList.toggle("online", state.live.connected);
+    pill.classList.toggle("offline", !state.live.connected);
+    const label = state.live.connected ? t("common.live") : t("common.polling");
+    const textNode = [...pill.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
+    if (textNode) textNode.textContent = label;
+    else {
+      const span = pill.querySelector("span");
+      pill.textContent = "";
+      if (span) pill.append(span);
+      pill.append(document.createTextNode(label));
+    }
+  }
+
+  if (state.view !== "home" || !state.snapshot) return;
+
+  const orb = app.querySelector(".status-orb");
+  if (orb) orb.className = `status-orb ${statusKind()}`;
+
+  const statusLabel = app.querySelector(".status-label");
+  if (statusLabel) statusLabel.textContent = statusText();
+
+  const liveDatum = [...app.querySelectorAll(".state-datum")].find((node) => {
+    const label = node.querySelector("span");
+    return label && label.textContent === "Live event";
+  });
+  if (liveDatum) {
+    const strong = liveDatum.querySelector("strong");
+    if (strong) strong.textContent = String(state.live.lastLine || "Waiting").slice(0, 96);
+  }
+
+  const eventMeta = app.querySelector(".state-panel .panel-heading span");
+  if (eventMeta && state.live.lastEvent) {
+    eventMeta.textContent = `event ${new Date(state.live.lastEvent).toLocaleTimeString()}`;
+  }
+}
+
+function statusFingerprint(status) {
+  if (!status) return "";
+  return [
+    status.connected ? "1" : "0",
+    status.connecting ? "1" : "0",
+    status.disconnected ? "1" : "0",
+    status.registrationMissing ? "1" : "0",
+    status.label || ""
+  ].join(":");
+}
+
 function render() {
+  const scroll = captureScroll();
+  const previousView = render.lastView;
   app.innerHTML = "";
   app.append(shell());
   if (state.busy) app.append(el("div", "busy", "Running warp-cli command..."));
@@ -960,7 +1414,14 @@ function render() {
     };
     app.append(toast);
   }
+  const stack = app.querySelector(".view-stack");
+  if (stack && previousView !== state.view) {
+    stack.classList.add("enter");
+  }
+  render.lastView = state.view;
+  restoreScroll(scroll);
 }
+render.lastView = null;
 
 async function boot() {
   let locale = "en";
@@ -977,7 +1438,7 @@ async function boot() {
   await refresh();
   connectLiveEvents();
   registerServiceWorker();
-  setInterval(refresh, 20000);
+  setInterval(() => refresh({ silent: true }), 20000);
   maybeStartupUpdateCheck();
 }
 
@@ -995,11 +1456,12 @@ function connectLiveEvents() {
     state.live.connected = true;
     state.live.label = "Live status connected";
     state.live.lastEvent = Date.now();
-    render();
+    patchLiveChrome();
   });
 
   events.addEventListener("warp", (event) => {
     const data = JSON.parse(event.data);
+    const before = statusFingerprint(state.snapshot?.status);
     state.live.connected = true;
     state.live.lastEvent = Date.now();
     state.live.lastLine = data.line || "";
@@ -1010,9 +1472,20 @@ function connectLiveEvents() {
     ) {
       state.snapshot.status = data.status;
     }
-    render();
-    window.clearTimeout(connectLiveEvents.refreshTimer);
-    connectLiveEvents.refreshTimer = window.setTimeout(refresh, 750);
+    const after = statusFingerprint(state.snapshot?.status);
+    const statusChanged = before !== after;
+
+    // Avoid full DOM rebuilds on every status line — those reset scroll.
+    if (statusChanged && state.view === "home") {
+      render();
+    } else {
+      patchLiveChrome();
+    }
+
+    if (statusChanged) {
+      window.clearTimeout(connectLiveEvents.refreshTimer);
+      connectLiveEvents.refreshTimer = window.setTimeout(() => refresh({ silent: true }), 2000);
+    }
   });
 
   events.addEventListener("error", (event) => {
@@ -1026,13 +1499,13 @@ function connectLiveEvents() {
         state.live.lastLine = state.live.lastLine || "Live status stream error";
       }
     }
-    render();
+    patchLiveChrome();
   });
 
   events.addEventListener("closed", () => {
     state.live.connected = false;
     state.live.label = "Live status closed";
-    render();
+    patchLiveChrome();
   });
 }
 
