@@ -34,4 +34,4 @@
 
 ## Testing
 
-Run `npm run check`, `npm run test:integration`, and `npm run test:update` before handoff. After packaging changes: `npm run package:stage` and `npm run package:deb`. Smoke `/api/health`, `/api/version`, and `/api/update/check` after update work. See `docs/UPDATES.md` for the release → manifest pipeline.
+Run `npm run check`, `npm run test:integration`, `npm run test:update`, and `npm run test:registration` before handoff. After packaging changes: `npm run package:stage` and `npm run package:deb`. Smoke `/api/health`, `/api/version`, `/api/account`, and `/api/update/check` after update or account work. See `docs/UPDATES.md` for the release → manifest pipeline.

@@ -132,6 +132,42 @@ test("POST /api/action connect invokes mock warp-cli", async () => {
   assert.match(res.json.result.stdout, /Success/);
 });
 
+test("GET /api/account returns structured free registration", async () => {
+  const res = await httpJson("GET", "/api/account");
+  assert.equal(res.status, 200);
+  assert.equal(res.json.registered, true);
+  assert.equal(res.json.consumer, true);
+  assert.equal(res.json.license, "MOCKKEY1-MOCKKEY2-MOCKKEY3");
+  assert.ok(Array.isArray(res.json.devices));
+  assert.equal(res.json.devices[0].deviceId, "mock-device-id");
+});
+
+test("POST /api/action applyLicense and registerOrganization validate input", async () => {
+  const badLicense = await httpJson("POST", "/api/action", {
+    action: "applyLicense",
+    value: "bad;rm"
+  });
+  assert.equal(badLicense.status, 400);
+
+  const okLicense = await httpJson("POST", "/api/action", {
+    action: "applyLicense",
+    value: "MOCKKEY1-MOCKKEY2-MOCKKEY3"
+  });
+  assert.equal(okLicense.status, 200);
+
+  const badTeam = await httpJson("POST", "/api/action", {
+    action: "registerOrganization",
+    value: "bad team!"
+  });
+  assert.equal(badTeam.status, 400);
+
+  const okTeam = await httpJson("POST", "/api/action", {
+    action: "registerOrganization",
+    value: "acme-corp"
+  });
+  assert.equal(okTeam.status, 200);
+});
+
 test("POST /api/action status via runCustom is rejected safely", async () => {
   const res = await httpJson("POST", "/api/action", {
     action: "runCustom",

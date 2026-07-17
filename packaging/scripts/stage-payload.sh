@@ -26,6 +26,7 @@ mkdir -p "${LIB}/lib/update" "${LIB}/lib/warp" "${LIB}/lib/notify" "${LIB}/confi
 install -m 0644 "${ROOT}/lib/config.mjs" "${LIB}/lib/config.mjs"
 install -m 0644 "${ROOT}/lib/version.mjs" "${LIB}/lib/version.mjs"
 install -m 0644 "${ROOT}/lib/warp/status.mjs" "${LIB}/lib/warp/status.mjs"
+install -m 0644 "${ROOT}/lib/warp/registration.mjs" "${LIB}/lib/warp/registration.mjs"
 install -m 0644 "${ROOT}/lib/notify/desktop.mjs" "${LIB}/lib/notify/desktop.mjs"
 install -m 0644 "${ROOT}/lib/notify/status-watcher.mjs" "${LIB}/lib/notify/status-watcher.mjs"
 install -m 0644 "${ROOT}/lib/update/semver.mjs" "${LIB}/lib/update/semver.mjs"

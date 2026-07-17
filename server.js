@@ -21,6 +21,14 @@ import { listForks, listReleases } from "./lib/update/github.mjs";
 import { detectInstallFormat } from "./lib/update/detect-format.mjs";
 import { isSafeGithubRef } from "./lib/update/detect-format.mjs";
 import { parseStatus } from "./lib/warp/status.mjs";
+import {
+  accessPortalUrl,
+  isConsumerAccount,
+  isZeroTrustAccount,
+  parseRegistrationDevices,
+  parseRegistrationOrganization,
+  parseRegistrationShow
+} from "./lib/warp/registration.mjs";
 import { startStatusWatcher } from "./lib/notify/status-watcher.mjs";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
@@ -43,6 +51,7 @@ const COMMANDS = {
   settings: ["settings", "list"],
   registration: ["registration", "show"],
   organization: ["registration", "organization"],
+  devices: ["registration", "devices"],
   stats: ["stats"],
   tunnelStats: ["tunnel", "stats"],
   dnsStats: ["dns", "stats"],
@@ -69,7 +78,7 @@ const COMMANDS = {
 const ACTIONS = {
   connect: ["connect"],
   disconnect: ["disconnect"],
-  register: ["registration", "new"],
+  register: ["--accept-tos", "registration", "new"],
   deleteRegistration: ["registration", "delete"],
   resetSettings: ["settings", "reset"],
   rotateKeys: ["tunnel", "rotate-keys"],
@@ -98,6 +107,9 @@ const MODES = new Set(["warp", "doh", "warp+doh", "dot", "warp+dot", "proxy", "t
 const PROTOCOLS = new Set(["MASQUE", "WireGuard"]);
 const FAMILIES = new Set(["full", "malware", "off"]);
 const MASQUE_OPTIONS = new Set(["h3-only", "h2-only", "h3-with-h2-fallback"]);
+const TEAM_NAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/i;
+const LICENSE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9-]{6,64}$/;
+const WARP_TOKEN_RE = /^(com\.cloudflare\.warp:\/\/\S+|https:\/\/[a-z0-9.-]+\.cloudflareaccess\.com\/\S+)$/i;
 
 function warpCliCommand() {
   return getConfig().warp?.cli || process.env.WARP_CLI || "warp-cli";
@@ -290,6 +302,21 @@ function actionArgs(body) {
   const { action, value, secondary } = body || {};
 
   if (ACTIONS[action]) return ACTIONS[action];
+  if (action === "registerOrganization") {
+    const team = String(value || "").trim().toLowerCase();
+    if (!TEAM_NAME_RE.test(team)) return null;
+    return ["--accept-tos", "registration", "new", team];
+  }
+  if (action === "applyLicense") {
+    const key = String(value || "").trim();
+    if (!LICENSE_KEY_RE.test(key)) return null;
+    return ["--accept-tos", "registration", "license", key];
+  }
+  if (action === "registrationToken") {
+    const token = String(value || "").trim();
+    if (token.length > 2048 || /[;&|<>`$\\\n\r]/.test(token) || !WARP_TOKEN_RE.test(token)) return null;
+    return ["--accept-tos", "registration", "token", token];
+  }
   if (action === "setMode" && MODES.has(value)) return ["mode", value];
   if (action === "setProtocol" && PROTOCOLS.has(value)) return ["tunnel", "protocol", "set", value];
   if (action === "setFamilies" && FAMILIES.has(value)) return ["dns", "families", value];
@@ -313,6 +340,72 @@ function actionArgs(body) {
   if (action === "removeTrustedSsid" && value) return ["trusted", "ssid", "remove", String(value)];
 
   return null;
+}
+
+/**
+ * Structured account/enrollment state for the Account UI.
+ * License is returned for consumer multi-device setup; public key stays redacted.
+ */
+async function accountDetails() {
+  const [showResult, orgResult, devicesResult] = await Promise.all([
+    runWarp(["--json", "registration", "show"]),
+    runWarp(["--json", "registration", "organization"]),
+    runWarp(["--json", "registration", "devices"])
+  ]);
+
+  const registration = parseRegistrationShow(
+    showResult.ok ? showResult.stdout : showResult.stderr || showResult.stdout
+  );
+  // Text fallback when --json is unsupported
+  if (!registration.registered && !showResult.ok) {
+    const textShow = await runWarp(["registration", "show"]);
+    Object.assign(
+      registration,
+      parseRegistrationShow(textShow.ok ? textShow.stdout : textShow.stderr || textShow.stdout)
+    );
+  }
+
+  const organization = parseRegistrationOrganization(
+    orgResult.ok ? orgResult.stdout : orgResult.stderr || orgResult.stdout
+  );
+  let devices = parseRegistrationDevices(
+    devicesResult.ok ? devicesResult.stdout : devicesResult.stderr || devicesResult.stdout
+  );
+  // devices is consumer-only; ignore failures for Zero Trust
+  if (!devicesResult.ok && /only available|not supported|zero.?trust|organization/i.test(
+    `${devicesResult.stderr}\n${devicesResult.stdout}`
+  )) {
+    devices = [];
+  }
+
+  const team = organization.organization;
+  const consumer = isConsumerAccount(registration);
+  const zeroTrust = isZeroTrustAccount(registration) || Boolean(team);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    registered: registration.registered,
+    accountType: registration.accountType,
+    accountId: registration.accountId,
+    deviceId: registration.deviceId,
+    license: consumer || registration.license ? registration.license : null,
+    managed: registration.managed,
+    organization: team,
+    accessPortalUrl: accessPortalUrl(team),
+    consumer,
+    zeroTrust,
+    devices,
+    nextSteps: !registration.registered
+      ? ["register_free", "enroll_zero_trust"]
+      : consumer
+        ? ["apply_license", "list_devices", "connect"]
+        : ["complete_token", "connect"],
+    commands: {
+      registration: redactCommand(showResult),
+      organization: redactCommand(orgResult),
+      devices: redactCommand(devicesResult)
+    }
+  };
 }
 
 async function handleApi(req, res, url) {
@@ -513,6 +606,11 @@ async function handleApi(req, res, url) {
 
     if (req.method === "GET" && url.pathname === "/api/snapshot") {
       json(res, 200, await snapshot());
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/account") {
+      json(res, 200, await accountDetails());
       return;
     }
 

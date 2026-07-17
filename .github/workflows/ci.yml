@@ -72,6 +72,9 @@ jobs:
       - name: Run notification unit tests
         run: npm run test:notify
 
+      - name: Run registration parser unit tests
+        run: npm run test:registration
+
   warp-real:
     name: WARP real smoke (optional)
     runs-on: ubuntu-latest
