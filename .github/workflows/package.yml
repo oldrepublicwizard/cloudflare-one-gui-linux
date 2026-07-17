@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: package-${{ github.event.release.tag_name || github.run_id }}
+  group: package-${{ github.event.release.tag_name || inputs.tag || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -23,23 +23,32 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
+      checkout_ref: ${{ steps.ver.outputs.checkout_ref }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
 
       - id: ver
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [[ -n "${{ github.event.release.tag_name }}" ]]; then
             TAG="${{ github.event.release.tag_name }}"
-          elif [[ -n "${{ inputs.tag }}" ]]; then
-            TAG="${{ inputs.tag }}"
+            CHECKOUT_REF="$TAG"
+          elif [[ -n "${INPUT_TAG}" ]]; then
+            if [[ ! "${INPUT_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid tag format: ${INPUT_TAG}" >&2
+              exit 1
+            fi
+            TAG="${INPUT_TAG}"
+            CHECKOUT_REF="${INPUT_TAG}"
           else
             TAG="v$(node -p "require('./package.json').version")"
+            CHECKOUT_REF="${GITHUB_SHA}"
           fi
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=$CHECKOUT_REF" >> "$GITHUB_OUTPUT"
 
   deb-rpm-arch:
     needs: resolve-version
@@ -47,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.resolve-version.outputs.checkout_ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -70,7 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.resolve-version.outputs.checkout_ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -96,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.resolve-version.outputs.checkout_ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -123,7 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.resolve-version.outputs.checkout_ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -155,7 +164,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.resolve-version.outputs.checkout_ref }}
 
       - name: Place snapcraft.yaml for snapcore/action-build
         run: |
@@ -172,14 +181,20 @@ jobs:
         run: |
           mkdir -p dist/packages
           VERSION="${{ needs.resolve-version.outputs.version }}"
+          DEST="dist/packages/cloudflare-one-gui_${VERSION}_amd64.snap"
           SNAP_FILE="${{ steps.snapcraft.outputs.snap }}"
           if [[ -n "$SNAP_FILE" && -f "$SNAP_FILE" ]]; then
-            cp "$SNAP_FILE" "dist/packages/cloudflare-one-gui_${VERSION}_amd64.snap"
+            cp "$SNAP_FILE" "$DEST"
           else
             shopt -s nullglob
             for snap in *.snap; do
-              mv "$snap" "dist/packages/cloudflare-one-gui_${VERSION}_amd64.snap"
+              mv "$snap" "$DEST"
+              break
             done
+          fi
+          if [[ ! -f "$DEST" ]]; then
+            echo "Snap artifact missing after build" >&2
+            exit 1
           fi
           ls -la dist/packages/
 

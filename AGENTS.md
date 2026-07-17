@@ -20,9 +20,11 @@ Avoid committing generated build output (`dist/`), local caches, `agentdecompile
 Use the npm scripts from the repository root:
 
 - `npm run dev` starts the local GUI server on `127.0.0.1:4173`.
-- `npm run check` syntax-checks the Node backend, frontend script, and health helper.
+- `npm run check` syntax-checks `server.js`, `public/app.js`, `public/service-worker.js`, `scripts/health-check.mjs`, and `scripts/port-open.mjs`.
 - `npm run install:desktop` installs the desktop menu entry.
+- `npm run uninstall:desktop` removes the desktop menu entry.
 - `npm run install:user-service` writes an optional user systemd service file.
+- `npm run uninstall:user-service` removes the optional user systemd service file.
 - `npm run package:stage` / `package:deb` / `package:rpm` / `package:appimage` build packaging artifacts (see `docs/PACKAGING.md`).
 - `./bin/cloudflare-one-gui --no-open` starts or reuses the managed server and prints the URL.
 - `./bin/cloudflare-one-gui --tray` starts the optional `yad` tray menu when a desktop display is available.

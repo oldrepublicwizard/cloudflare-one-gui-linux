@@ -122,6 +122,10 @@ start_server() {
   done
 
   echo "Cloudflare One GUI server did not become healthy. Log: $LOG_FILE" >&2
+  if is_running; then
+    kill "$(cat "$PID_FILE")" 2>/dev/null || true
+    rm -f "$PID_FILE"
+  fi
   return 1
 }
 

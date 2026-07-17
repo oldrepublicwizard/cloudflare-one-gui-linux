@@ -128,9 +128,9 @@ function runWarp(args, options = {}) {
 function parseStatus(text) {
   const clean = text.replace(/\r/g, "").trim();
   const lower = clean.toLowerCase();
-  const connected = lower.includes("connected") && !lower.includes("disconnected");
-  const connecting = lower.includes("connecting") || lower.includes("reconnecting");
-  const disconnected = lower.includes("disconnected") || lower.includes("not connected");
+  const disconnected = /\b(disconnected|not connected)\b/.test(lower);
+  const connecting = !disconnected && /\b(connecting|reconnecting)\b/.test(lower);
+  const connected = !disconnected && !connecting && /\bconnected\b/.test(lower);
   const registrationMissing = lower.includes("registration missing") || lower.includes("not registered");
   const healthy = lower.includes("network: healthy") || lower === "healthy";
   const unhealthy = lower.includes("unhealthy") || lower.includes("degraded");
