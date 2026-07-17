@@ -72,6 +72,7 @@ const state = {
     desired: false,
     allowLan: false,
     active: false,
+    probeError: false,
     detail: "",
     guidedCommands: null,
     script: null,
@@ -201,9 +202,10 @@ async function loadKillSwitch(showBusy = true) {
     const body = await response.json();
     state.killswitch.desired = Boolean(body.desired);
     state.killswitch.allowLan = Boolean(body.allowLan);
-    state.killswitch.active = Boolean(body.active);
+    state.killswitch.active = body.active === null ? null : Boolean(body.active);
+    state.killswitch.probeError = Boolean(body.probeError);
     state.killswitch.detail = body.detail || "";
-    if (body.ok !== false) {
+    if (body.ok !== false && !body.guidedCommands) {
       state.killswitch.guidedCommands = null;
       state.killswitch.script = null;
     }
@@ -227,7 +229,8 @@ async function setKillSwitch(enabled, allowLan = state.killswitch.allowLan) {
     const body = await response.json();
     state.killswitch.desired = Boolean(body.desired);
     state.killswitch.allowLan = Boolean(body.allowLan);
-    state.killswitch.active = Boolean(body.active);
+    state.killswitch.active = body.active === null ? null : Boolean(body.active);
+    state.killswitch.probeError = Boolean(body.probeError);
     state.killswitch.detail = body.detail || "";
     state.killswitch.guidedCommands = body.guidedCommands || null;
     state.killswitch.script = body.script || null;
@@ -246,11 +249,16 @@ async function setKillSwitch(enabled, allowLan = state.killswitch.allowLan) {
 function killSwitchPanel() {
   const ks = state.killswitch;
   const panel = el("section", "panel killswitch-panel");
-  const mismatch = ks.desired !== ks.active;
+  // Treat orphan active (desired off, table on) as on so the toggle can disable.
+  const effectivelyOn = Boolean(ks.active) || Boolean(ks.desired);
+  const mismatch = Boolean(ks.active) !== Boolean(ks.desired) || Boolean(ks.probeError);
+  const badge = ks.probeError
+    ? t("home.killSwitchUnknown")
+    : (ks.active ? t("home.killSwitchOn") : t("home.killSwitchOff"));
   panel.innerHTML = `
     <div class="panel-heading">
       <h3${tipMarkup("killSwitch")}>${t("home.killSwitch")}</h3>
-      <span>${ks.active ? t("home.killSwitchOn") : t("home.killSwitchOff")}</span>
+      <span>${badge}</span>
     </div>
     <p class="panel-lede tip" data-tip="${escapeHtml(tip("killSwitch"))}" tabindex="0">${t("home.killSwitchCopy")}</p>
   `;
@@ -262,13 +270,13 @@ function killSwitchPanel() {
       <p>${escapeHtml(ks.detail || (mismatch ? t("home.killSwitchMismatch") : t("home.killSwitchHint")))}</p>
     </div>
   `;
-  const toggle = el("button", `switch ${ks.desired ? "on" : ""}`);
+  const toggle = el("button", `switch ${effectivelyOn ? "on" : ""}`);
   toggle.type = "button";
   toggle.setAttribute("role", "switch");
-  toggle.setAttribute("aria-checked", ks.desired ? "true" : "false");
+  toggle.setAttribute("aria-checked", effectivelyOn ? "true" : "false");
   toggle.setAttribute("aria-label", t("home.killSwitchLabel"));
   toggle.disabled = ks.loading || state.busy;
-  toggle.onclick = () => setKillSwitch(!ks.desired, ks.allowLan);
+  toggle.onclick = () => setKillSwitch(!effectivelyOn, ks.allowLan);
   main.append(toggle);
   panel.append(main);
 
@@ -284,8 +292,8 @@ function killSwitchPanel() {
   lanToggle.setAttribute("role", "switch");
   lanToggle.setAttribute("aria-checked", ks.allowLan ? "true" : "false");
   lanToggle.setAttribute("aria-label", t("home.killSwitchAllowLan"));
-  lanToggle.disabled = ks.loading || state.busy;
-  lanToggle.onclick = () => setKillSwitch(ks.desired, !ks.allowLan);
+  lanToggle.disabled = ks.loading || state.busy || !effectivelyOn;
+  lanToggle.onclick = () => setKillSwitch(true, !ks.allowLan);
   lan.append(lanToggle);
   panel.append(lan);
 

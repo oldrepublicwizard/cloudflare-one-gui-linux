@@ -144,23 +144,39 @@ test("GET /api/account returns structured free registration", async () => {
   // Structured fields stay usable; raw command blobs redact secrets (JSON + text).
   const raw = res.json.commands?.registration?.stdout || "";
   assert.match(raw, /"public_key"\s*:\s*"\[redacted\]"/i);
+  assert.match(raw, /"license"\s*:\s*"\[redacted\]"/i);
+  assert.match(raw, /"device_id"\s*:\s*"\[redacted\]"/i);
   assert.doesNotMatch(raw, /mock-public-key/);
+  assert.doesNotMatch(raw, /MOCKKEY1/);
 });
 
 test("GET /api/killswitch reports desired/active state", async () => {
   const res = await httpJson("GET", "/api/killswitch");
   assert.equal(res.status, 200);
-  assert.equal(res.json.ok, true);
   assert.equal(typeof res.json.desired, "boolean");
-  assert.equal(typeof res.json.active, "boolean");
+  assert.ok(res.json.active === true || res.json.active === false || res.json.active === null);
   assert.equal(res.json.interface, "CloudflareWARP");
 });
 
 test("POST /api/killswitch disable is idempotent when inactive", async () => {
   const res = await httpJson("POST", "/api/killswitch", { enabled: false, allowLan: false });
-  // May be 200 (removed/noop) or 502 if nft is missing entirely — both acceptable in CI.
+  // May be 200 (removed/noop) or 502 if nft cannot mutate — both acceptable in CI.
   assert.ok(res.status === 200 || res.status === 502, `unexpected status ${res.status}`);
   assert.equal(res.json.desired, false);
+});
+
+test("POST /api/killswitch enable without privilege keeps desired false", async () => {
+  const res = await httpJson("POST", "/api/killswitch", { enabled: true, allowLan: false });
+  // CI has THIRDFLARE_NFT_NO_PKEXEC=1 — apply should fail and not commit session desired.
+  assert.equal(res.status, 502);
+  assert.equal(res.json.ok, false);
+  assert.equal(res.json.desired, false);
+  assert.ok(Array.isArray(res.json.guidedCommands) || typeof res.json.script === "string");
+});
+
+test("POST /api/killswitch rejects non-boolean enabled", async () => {
+  const res = await httpJson("POST", "/api/killswitch", { enabled: "yes" });
+  assert.equal(res.status, 400);
 });
 
 test("POST /api/action applyLicense and registerOrganization validate input", async () => {

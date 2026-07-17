@@ -155,8 +155,9 @@ curl -s http://127.0.0.1:4173/api/config | jq
 
 Apply provisional overrides (lost on daemon restart unless written to disk separately).
 
-Session may set `ui.locale` / `ui.theme` / `ui.openBrowser` / `ui.notifications`, `updates.channel` / `updates.checkOnStartup`, and `warp.killSwitch` / `warp.killSwitchAllowLan` via `/api/config/session` (kill switch is also applied through `POST /api/killswitch`).  
+Session may set `ui.locale` / `ui.theme` / `ui.openBrowser` / `ui.notifications` and `updates.channel` / `updates.checkOnStartup` via `/api/config/session`.  
 `updates.source` may only change through `POST /api/update/source`, which accepts the pinned upstream or one of its GitHub forks.  
+`warp.killSwitch` / `warp.killSwitchAllowLan` session state is set only by `POST /api/killswitch` after nftables apply succeeds (not via `/api/config/session`).  
 `warp.cli`, `server.*`, and `webui.*` are **not** session-overridable.
 
 ```bash

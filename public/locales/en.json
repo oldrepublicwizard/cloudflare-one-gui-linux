@@ -48,6 +48,7 @@
     "killSwitchMismatch": "Desired state differs from nftables — privilege may be required (pkexec/sudo).",
     "killSwitchOn": "Active",
     "killSwitchOff": "Off",
+    "killSwitchUnknown": "Unknown",
     "killSwitchAllowLan": "Allow LAN (RFC1918 / ULA)",
     "killSwitchAllowLanHint": "Keep printers and local NAS reachable while the kill switch is on.",
     "killSwitchConfirm": "Enable the kill switch? Outbound traffic outside the WARP tunnel will be dropped until you turn this off. Requires nftables privileges (nft or pkexec).",

@@ -13,7 +13,8 @@ import {
   getPinnedUpdateSource,
   reloadConfig,
   setSessionOverrides,
-  setSessionUpdateSource
+  setSessionUpdateSource,
+  setSessionKillSwitch
 } from "./lib/config.mjs";
 import { getVersion, getVersionInfo } from "./lib/version.mjs";
 import { applyUpdate, checkForUpdate, prepareApply } from "./lib/update/index.mjs";
@@ -618,10 +619,11 @@ async function handleApi(req, res, url) {
       const allowLan = Boolean(getConfig().warp?.killSwitchAllowLan);
       const probe = await probeKillSwitchActive();
       json(res, 200, {
-        ok: true,
+        ok: !probe.probeError,
         desired,
         allowLan,
         active: probe.active,
+        probeError: Boolean(probe.probeError),
         detail: probe.detail,
         interface: "CloudflareWARP",
         note: "Native nftables kill switch — blocks outbound traffic except loopback, the WARP tunnel, and Cloudflare bootstrap IPs."
@@ -635,24 +637,28 @@ async function handleApi(req, res, url) {
         json(res, 400, { ok: false, error: "Body must include boolean enabled." });
         return;
       }
+      const previousDesired = Boolean(getConfig().warp?.killSwitch);
+      const previousAllowLan = Boolean(getConfig().warp?.killSwitchAllowLan);
       const allowLan = typeof body.allowLan === "boolean"
         ? body.allowLan
-        : Boolean(getConfig().warp?.killSwitchAllowLan);
-      setSessionOverrides({
-        warp: {
-          killSwitch: body.enabled,
-          killSwitchAllowLan: allowLan
-        }
-      });
+        : previousAllowLan;
+      // Apply nft first — only commit session desired after a successful apply.
       const result = await applyKillSwitch({
         enabled: body.enabled,
         allowLan
       });
+      if (result.ok) {
+        setSessionKillSwitch({ enabled: body.enabled, allowLan });
+      } else {
+        setSessionKillSwitch({ enabled: previousDesired, allowLan: previousAllowLan });
+      }
+      const desired = Boolean(getConfig().warp?.killSwitch);
       json(res, result.ok ? 200 : 502, {
         ok: result.ok,
-        desired: body.enabled,
-        allowLan,
-        active: result.enabled,
+        desired,
+        allowLan: Boolean(getConfig().warp?.killSwitchAllowLan),
+        active: result.active === null ? null : Boolean(result.enabled),
+        probeError: Boolean(result.probeError),
         detail: result.detail,
         method: result.method,
         guidedCommands: result.guidedCommands,
@@ -735,17 +741,26 @@ createServer(async (req, res) => {
     console.log("Desktop notifications enabled (ui.notifications).");
   }
 
-  if (getConfig().warp?.killSwitch) {
-    applyKillSwitch({
-      enabled: true,
-      allowLan: Boolean(getConfig().warp?.killSwitchAllowLan)
-    }).then((result) => {
-      if (result.ok) {
-        console.log("WARP kill switch active (warp.killSwitch).");
-      } else {
-        console.warn(`WARP kill switch desired but not applied: ${result.detail}`);
+  // Reconcile kill switch: enable when desired; clear orphan table only when probe sees it.
+  {
+    const desired = Boolean(getConfig().warp?.killSwitch);
+    const allowLan = Boolean(getConfig().warp?.killSwitchAllowLan);
+    (async () => {
+      if (desired) {
+        const result = await applyKillSwitch({ enabled: true, allowLan });
+        if (result.ok) console.log("WARP kill switch active (warp.killSwitch).");
+        else console.warn(`WARP kill switch desired but not applied: ${result.detail}`);
+        return;
       }
-    }).catch((error) => {
+      const probe = await probeKillSwitchActive();
+      if (probe.active === true) {
+        const result = await applyKillSwitch({ enabled: false, allowLan });
+        if (result.ok) console.log("WARP kill switch orphan table removed.");
+        else console.warn(`WARP kill switch orphan cleanup failed: ${result.detail}`);
+      } else if (probe.probeError) {
+        console.warn(`WARP kill switch probe unavailable at startup: ${probe.detail}`);
+      }
+    })().catch((error) => {
       console.warn(`WARP kill switch apply failed: ${error.message}`);
     });
   }
