@@ -10,6 +10,9 @@ description: |
 grade: stable
 confinement: classic
 license: MIT
+website: https://github.com/oldrepublicwizard/thirdflare-one
+source-code: https://github.com/oldrepublicwizard/thirdflare-one
+contact: https://github.com/oldrepublicwizard/thirdflare-one/issues
 
 apps:
   thirdflare-one:
