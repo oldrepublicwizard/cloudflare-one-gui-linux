@@ -3,7 +3,6 @@
 # Soft-skips when the daemon is unavailable unless WARP_CI_REQUIRE_REAL=1.
 set -euo pipefail
 
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 REQUIRE="${WARP_CI_REQUIRE_REAL:-0}"
 SETTLE_SEC="${WARP_CI_SETTLE_SEC:-8}"
 
